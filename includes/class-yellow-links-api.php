@@ -13,19 +13,54 @@ class Yellow_Links_API {
         register_rest_route( 'yellow-links/v1', '/gemini/analyze', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'analyze_link' ),
-            'permission_callback' => '__return_true', // Open or adjust permission as needed
+            'permission_callback' => '__return_true',
         ) );
 
         register_rest_route( 'yellow-links/v1', '/gemini/suggest-ad', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'suggest_ad' ),
-            'permission_callback' => '__return_true', // Open or adjust permission as needed
+            'permission_callback' => '__return_true',
         ) );
 
         register_rest_route( 'yellow-links/v1', '/network', array(
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => array( $this, 'get_network_links' ),
-            'permission_callback' => '__return_true', // Public directory reading
+            'permission_callback' => '__return_true',
+        ) );
+
+        // Link Submission
+        register_rest_route( 'yellow-links/v1', '/links', array(
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => array( $this, 'create_link' ),
+            'permission_callback' => '__return_true',
+        ) );
+
+        // Voting & Moderation Signal
+        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/vote', array(
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => array( $this, 'vote_link' ),
+            'permission_callback' => '__return_true',
+        ) );
+
+        // Click Tracking
+        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/click', array(
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => array( $this, 'record_click' ),
+            'permission_callback' => '__return_true',
+        ) );
+
+        // Community Comments
+        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/comment', array(
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => array( $this, 'add_comment' ),
+            'permission_callback' => '__return_true',
+        ) );
+
+        // GeoJSON Open Data Export
+        register_rest_route( 'yellow-links/v1', '/export/geojson', array(
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => array( $this, 'export_geojson' ),
+            'permission_callback' => '__return_true',
         ) );
     }
 
@@ -211,29 +246,50 @@ class Yellow_Links_API {
         if ( $query->have_posts() ) {
             while ( $query->have_posts() ) {
                 $query->the_post();
+                $post_id = get_the_ID();
                 
-                $tags_meta = get_post_meta( get_the_ID(), 'yl_tags', true );
+                $tags_meta = get_post_meta( $post_id, 'yl_tags', true );
                 $tags = !empty( $tags_meta ) ? json_decode( $tags_meta, true ) : array( 'GENERAL' );
                 if ( !is_array( $tags ) ) $tags = array( 'GENERAL' );
 
-                $cats = wp_get_post_terms( get_the_ID(), 'yellow_link_category', array('fields' => 'names') );
+                $cats = wp_get_post_terms( $post_id, 'yellow_link_category', array('fields' => 'names') );
                 $category = !empty( $cats ) ? $cats[0] : 'Blogs & Personal';
 
+                $upvotes = (int) get_post_meta( $post_id, 'yl_upvotes', true );
+                if ( $upvotes < 1 ) $upvotes = 1;
+                $downvotes = (int) get_post_meta( $post_id, 'yl_downvotes', true );
+                $clicks = (int) get_post_meta( $post_id, 'yl_clicks', true );
+
+                // Fetch WP Comments
+                $wp_comments = get_comments( array( 'post_id' => $post_id, 'status' => 'approve' ) );
+                $formatted_comments = array();
+                foreach ( $wp_comments as $c ) {
+                    $formatted_comments[] = array(
+                        'id'        => 'comment-' . $c->comment_ID,
+                        'author'    => $c->comment_author ?: 'Anonymous',
+                        'text'      => $c->comment_content,
+                        'timestamp' => strtotime( $c->comment_date ) * 1000,
+                    );
+                }
+
                 $local_links[] = array(
-                    'id'           => 'link-' . get_the_ID(),
-                    'url'          => get_post_meta( get_the_ID(), 'yl_url', true ) ?: get_permalink(),
+                    'id'           => 'link-' . $post_id,
+                    'url'          => get_post_meta( $post_id, 'yl_url', true ) ?: get_permalink(),
                     'title'        => get_the_title(),
                     'description'  => get_the_content(),
                     'category'     => $category,
-                    'clicks'       => 0,
-                    'upvotes'      => 1,
-                    'downvotes'    => 0,
+                    'clicks'       => $clicks,
+                    'upvotes'      => $upvotes,
+                    'downvotes'    => $downvotes,
                     'tags'         => $tags,
-                    'submitter'    => get_the_author(),
+                    'submitter'    => get_the_author() ?: 'Anonymous',
                     'timestamp'    => strtotime( get_the_date() ) * 1000,
-                    'comments'     => array(),
-                    'safetyStatus' => get_post_meta( get_the_ID(), 'yl_safetyStatus', true ) ?: 'safe',
-                    'safetyReason' => get_post_meta( get_the_ID(), 'yl_safetyReason', true ) ?: 'Verified local link.',
+                    'comments'     => $formatted_comments,
+                    'safetyStatus' => get_post_meta( $post_id, 'yl_safetyStatus', true ) ?: 'safe',
+                    'safetyReason' => get_post_meta( $post_id, 'yl_safetyReason', true ) ?: 'Verified local link.',
+                    'trustTier'    => get_post_meta( $post_id, 'yl_trust_tier', true ) ?: 'community',
+                    'neighborhood' => get_post_meta( $post_id, 'yl_neighborhood', true ) ?: '',
+                    'zip'          => get_post_meta( $post_id, 'yl_zip', true ) ?: '',
                     'isSister'     => false
                 );
             }
@@ -256,14 +312,6 @@ class Yellow_Links_API {
                 if ( !is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200 ) {
                     $body = json_decode( wp_remote_retrieve_body( $response ), true );
                     if ( is_array( $body ) ) {
-                        // Mark as sister and append
-                        foreach( $body as &$remote_link ) {
-                            $remote_link['isSister'] = true;
-                            $remote_link['sisterUrl'] = $site;
-                        }
-                        // To avoid infinite loops across sister sites hitting each other's network endpoints, 
-                        // we should ideally fetch `/wp/v2/yellow_links` instead, or only merge those where isSister is false.
-                        // Let's filter out remote links that are themselves sisters (only accept their local ones).
                         $remote_locals = array_filter( $body, function($l) {
                             return !isset($l['isSister']) || $l['isSister'] === false;
                         });
@@ -282,5 +330,211 @@ class Yellow_Links_API {
         set_transient( $transient_key, $all_links, 5 * MINUTE_IN_SECONDS );
 
         return rest_ensure_response( $all_links );
+    }
+
+    public function create_link( WP_REST_Request $request ) {
+        $url          = sanitize_text_field( $request->get_param( 'url' ) );
+        $title        = sanitize_text_field( $request->get_param( 'title' ) );
+        $description  = sanitize_textarea_field( $request->get_param( 'description' ) );
+        $category     = sanitize_text_field( $request->get_param( 'category' ) );
+        $submitter    = sanitize_text_field( $request->get_param( 'submitter' ) );
+        $safetyStatus = sanitize_text_field( $request->get_param( 'safetyStatus' ) ?: 'safe' );
+        $safetyReason = sanitize_text_field( $request->get_param( 'safetyReason' ) ?: 'Community submission.' );
+        $tags_input   = $request->get_param( 'tags' );
+        $trustTier    = sanitize_text_field( $request->get_param( 'trustTier' ) ?: 'community' );
+        $neighborhood = sanitize_text_field( $request->get_param( 'neighborhood' ) );
+        $zip          = sanitize_text_field( $request->get_param( 'zip' ) );
+
+        if ( empty( $url ) || empty( $title ) ) {
+            return new WP_Error( 'missing_fields', 'URL and Title are required.', array( 'status' => 400 ) );
+        }
+
+        // Parse tags
+        if ( is_array( $tags_input ) ) {
+            $tags_array = array_map( 'sanitize_text_field', $tags_input );
+        } elseif ( is_string( $tags_input ) ) {
+            $tags_array = array_filter( array_map( 'trim', explode( ',', $tags_input ) ) );
+        } else {
+            $tags_array = array( 'GENERAL' );
+        }
+
+        $auto_publish = get_option( 'xophz_compass_yellow_links_auto_publish', '1' );
+        $post_status  = ( $auto_publish === '1' ) ? 'publish' : 'pending';
+
+        $post_id = wp_insert_post( array(
+            'post_title'   => $title,
+            'post_content' => $description,
+            'post_status'  => $post_status,
+            'post_type'    => 'yellow_link',
+        ) );
+
+        if ( is_wp_error( $post_id ) ) {
+            return $post_id;
+        }
+
+        // Assign Category
+        if ( !empty( $category ) ) {
+            wp_set_object_terms( $post_id, $category, 'yellow_link_category' );
+        }
+
+        // Save Meta
+        update_post_meta( $post_id, 'yl_url', $url );
+        update_post_meta( $post_id, 'yl_tags', wp_json_encode( $tags_array ) );
+        update_post_meta( $post_id, 'yl_safetyStatus', $safetyStatus );
+        update_post_meta( $post_id, 'yl_safetyReason', $safetyReason );
+        update_post_meta( $post_id, 'yl_upvotes', 1 );
+        update_post_meta( $post_id, 'yl_downvotes', 0 );
+        update_post_meta( $post_id, 'yl_clicks', 0 );
+        update_post_meta( $post_id, 'yl_trust_tier', $trustTier );
+        if ( !empty( $neighborhood ) ) update_post_meta( $post_id, 'yl_neighborhood', $neighborhood );
+        if ( !empty( $zip ) ) update_post_meta( $post_id, 'yl_zip', $zip );
+
+        // Clear transient
+        delete_transient( 'yellow_links_network_cache' );
+
+        return rest_ensure_response( array(
+            'success'   => true,
+            'id'        => 'link-' . $post_id,
+            'status'    => $post_status,
+            'message'   => ( $post_status === 'pending' ) ? 'Link submitted for moderation.' : 'Link published successfully.',
+        ) );
+    }
+
+    public function vote_link( WP_REST_Request $request ) {
+        $raw_id = $request->get_param( 'id' );
+        $type   = sanitize_text_field( $request->get_param( 'type' ) );
+        $post_id = (int) str_replace( 'link-', '', $raw_id );
+
+        if ( !$post_id || get_post_type( $post_id ) !== 'yellow_link' ) {
+            return new WP_Error( 'invalid_id', 'Invalid yellow_link ID.', array( 'status' => 404 ) );
+        }
+
+        $upvotes   = (int) get_post_meta( $post_id, 'yl_upvotes', true );
+        $downvotes = (int) get_post_meta( $post_id, 'yl_downvotes', true );
+
+        if ( $type === 'up' ) {
+            $upvotes++;
+            update_post_meta( $post_id, 'yl_upvotes', $upvotes );
+        } elseif ( $type === 'down' ) {
+            $downvotes++;
+            update_post_meta( $post_id, 'yl_downvotes', $downvotes );
+        }
+
+        // Calculate safety status update
+        $safetyStatus = get_post_meta( $post_id, 'yl_safetyStatus', true ) ?: 'safe';
+        $safetyReason = get_post_meta( $post_id, 'yl_safetyReason', true ) ?: '';
+
+        if ( $downvotes > 15 && $downvotes > ( $upvotes * 2 ) ) {
+            $safetyStatus = 'unsafe';
+            $safetyReason = 'Community Flagging: Excessive warning reports submitted by directory visitors.';
+            update_post_meta( $post_id, 'yl_safetyStatus', $safetyStatus );
+            update_post_meta( $post_id, 'yl_safetyReason', $safetyReason );
+        } elseif ( $downvotes > 5 && $downvotes > $upvotes ) {
+            $safetyStatus = 'warning';
+            $safetyReason = 'Community Warning: Multiple users reported potential safety issues.';
+            update_post_meta( $post_id, 'yl_safetyStatus', $safetyStatus );
+            update_post_meta( $post_id, 'yl_safetyReason', $safetyReason );
+        }
+
+        delete_transient( 'yellow_links_network_cache' );
+
+        return rest_ensure_response( array(
+            'id'           => 'link-' . $post_id,
+            'upvotes'      => $upvotes,
+            'downvotes'    => $downvotes,
+            'safetyStatus' => $safetyStatus,
+            'safetyReason' => $safetyReason,
+        ) );
+    }
+
+    public function record_click( WP_REST_Request $request ) {
+        $raw_id  = $request->get_param( 'id' );
+        $post_id = (int) str_replace( 'link-', '', $raw_id );
+
+        if ( $post_id && get_post_type( $post_id ) === 'yellow_link' ) {
+            $clicks = (int) get_post_meta( $post_id, 'yl_clicks', true );
+            $clicks++;
+            update_post_meta( $post_id, 'yl_clicks', $clicks );
+            delete_transient( 'yellow_links_network_cache' );
+            return rest_ensure_response( array( 'id' => 'link-' . $post_id, 'clicks' => $clicks ) );
+        }
+
+        return new WP_Error( 'invalid_id', 'Invalid link ID.', array( 'status' => 404 ) );
+    }
+
+    public function add_comment( WP_REST_Request $request ) {
+        $raw_id  = $request->get_param( 'id' );
+        $post_id = (int) str_replace( 'link-', '', $raw_id );
+        $author  = sanitize_text_field( $request->get_param( 'author' ) ?: 'Anonymous' );
+        $text    = sanitize_textarea_field( $request->get_param( 'text' ) );
+
+        if ( !$post_id || empty( $text ) ) {
+            return new WP_Error( 'missing_fields', 'Post ID and comment text are required.', array( 'status' => 400 ) );
+        }
+
+        $comment_id = wp_insert_comment( array(
+            'comment_post_ID'      => $post_id,
+            'comment_author'       => $author,
+            'comment_content'      => $text,
+            'comment_approved'     => 1,
+            'comment_type'         => 'comment',
+        ) );
+
+        if ( !$comment_id ) {
+            return new WP_Error( 'comment_failed', 'Could not save comment.', array( 'status' => 500 ) );
+        }
+
+        delete_transient( 'yellow_links_network_cache' );
+
+        return rest_ensure_response( array(
+            'id'        => 'comment-' . $comment_id,
+            'author'    => $author,
+            'text'      => $text,
+            'timestamp' => time() * 1000,
+        ) );
+    }
+
+    public function export_geojson( WP_REST_Request $request ) {
+        $args = array(
+            'post_type'      => 'yellow_link',
+            'posts_per_page' => -1,
+            'post_status'    => 'publish',
+        );
+        $query = new WP_Query( $args );
+
+        $features = array();
+
+        if ( $query->have_posts() ) {
+            while ( $query->have_posts() ) {
+                $query->the_post();
+                $post_id = get_the_ID();
+                $lat = get_post_meta( $post_id, 'yl_lat', true );
+                $lng = get_post_meta( $post_id, 'yl_lng', true );
+
+                if ( !empty( $lat ) && !empty( $lng ) ) {
+                    $features[] = array(
+                        'type' => 'Feature',
+                        'geometry' => array(
+                            'type'        => 'Point',
+                            'coordinates' => array( (float) $lng, (float) $lat )
+                        ),
+                        'properties' => array(
+                            'id'           => $post_id,
+                            'title'        => get_the_title(),
+                            'url'          => get_post_meta( $post_id, 'yl_url', true ),
+                            'neighborhood' => get_post_meta( $post_id, 'yl_neighborhood', true ),
+                            'zip'          => get_post_meta( $post_id, 'yl_zip', true ),
+                            'trustTier'    => get_post_meta( $post_id, 'yl_trust_tier', true ) ?: 'community',
+                        )
+                    );
+                }
+            }
+            wp_reset_postdata();
+        }
+
+        return rest_ensure_response( array(
+            'type'     => 'FeatureCollection',
+            'features' => $features
+        ) );
     }
 }

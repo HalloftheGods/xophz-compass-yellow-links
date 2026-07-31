@@ -35,6 +35,10 @@ class Xophz_Compass_Yellow_Links {
 
         // API endpoints
         add_action( 'rest_api_init', array( $this, 'register_api_endpoints' ) );
+
+        // Embed Shortcodes
+        add_shortcode( 'yellow_links_directory', array( $this, 'render_directory_shortcode' ) );
+        add_shortcode( 'yellow_links_widget', array( $this, 'render_widget_shortcode' ) );
     }
 
     public function register_api_endpoints() {
@@ -56,6 +60,7 @@ class Xophz_Compass_Yellow_Links {
     public function register_settings() {
         register_setting( 'xophz_compass_yellow_links_options', 'xophz_compass_yellow_links_custom_slug' );
         register_setting( 'xophz_compass_yellow_links_options', 'xophz_compass_yellow_links_sister_sites' );
+        register_setting( 'xophz_compass_yellow_links_options', 'xophz_compass_yellow_links_auto_publish' );
     }
 
     public function display_plugin_setup_page() {
@@ -68,6 +73,7 @@ class Xophz_Compass_Yellow_Links {
                 do_settings_sections( 'xophz_compass_yellow_links_options' );
                 $slug = get_option( 'xophz_compass_yellow_links_custom_slug', 'yellow-links' );
                 $sisters = get_option( 'xophz_compass_yellow_links_sister_sites', '' );
+                $auto_pub = get_option( 'xophz_compass_yellow_links_auto_publish', '1' );
                 ?>
                 <table class="form-table">
                     <tr valign="top">
@@ -75,6 +81,15 @@ class Xophz_Compass_Yellow_Links {
                         <td>
                             <input type="text" name="xophz_compass_yellow_links_custom_slug" value="<?php echo esc_attr( $slug ); ?>" class="regular-text" />
                             <p class="description">The URL slug where the app will be loaded (e.g. <code>yellow-links</code> for <code>/yellow-links</code>). Leave blank to disable standalone rendering.</p>
+                        </td>
+                    </tr>
+                    <tr valign="top">
+                        <th scope="row">Submission Moderation Mode</th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="xophz_compass_yellow_links_auto_publish" value="1" <?php checked( '1', $auto_pub ); ?> />
+                                Automatically publish user submissions (uncheck to require admin review in Pending Queue).
+                            </label>
                         </td>
                     </tr>
                     <tr valign="top">
@@ -89,6 +104,44 @@ class Xophz_Compass_Yellow_Links {
             </form>
         </div>
         <?php
+    }
+
+    public function render_directory_shortcode( $atts ) {
+        $slug = get_option( 'xophz_compass_yellow_links_custom_slug', 'yellow-links' );
+        $url = home_url( '/' . $slug . '/' );
+        return '<div class="yellow-links-embed" style="width:100%;height:700px;border:none;"><iframe src="' . esc_url( $url ) . '" style="width:100%;height:100%;border:none;"></iframe></div>';
+    }
+
+    public function render_widget_shortcode( $atts ) {
+        $atts = shortcode_atts( array( 'category' => '', 'limit' => 5 ), $atts, 'yellow_links_widget' );
+        $args = array(
+            'post_type'      => 'yellow_link',
+            'posts_per_page' => (int) $atts['limit'],
+            'post_status'    => 'publish',
+        );
+        if ( !empty( $atts['category'] ) ) {
+            $args['tax_query'] = array(
+                array(
+                    'taxonomy' => 'yellow_link_category',
+                    'field'    => 'name',
+                    'terms'    => $atts['category'],
+                )
+            );
+        }
+        $query = new WP_Query( $args );
+        $output = '<ul class="yellow-links-widget-list">';
+        if ( $query->have_posts() ) {
+            while ( $query->have_posts() ) {
+                $query->the_post();
+                $target_url = get_post_meta( get_the_ID(), 'yl_url', true ) ?: get_permalink();
+                $output .= '<li><a href="' . esc_url( $target_url ) . '" target="_blank" rel="noopener">' . esc_html( get_the_title() ) . '</a> - ' . esc_html( get_the_excerpt() ) . '</li>';
+            }
+            wp_reset_postdata();
+        } else {
+            $output .= '<li>No community links found.</li>';
+        }
+        $output .= '</ul>';
+        return $output;
     }
 
     public function flush_rewrites_on_save( $old_value, $new_value ) {
