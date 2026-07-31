@@ -56,6 +56,13 @@ class Yellow_Links_API {
             'permission_callback' => '__return_true',
         ) );
 
+        // Comment Voting
+        register_rest_route( 'yellow-links/v1', '/comments/(?P<id>[a-zA-Z0-9_-]+)/vote', array(
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => array( $this, 'vote_comment' ),
+            'permission_callback' => '__return_true',
+        ) );
+
         // GeoJSON Open Data Export
         register_rest_route( 'yellow-links/v1', '/export/geojson', array(
             'methods'             => WP_REST_Server::READABLE,
@@ -269,6 +276,7 @@ class Yellow_Links_API {
                         'author'    => $c->comment_author ?: 'Anonymous',
                         'text'      => $c->comment_content,
                         'timestamp' => strtotime( $c->comment_date ) * 1000,
+                        'votes'     => (int) get_comment_meta( $c->comment_ID, 'yl_comment_votes', true ),
                     );
                 }
 
@@ -491,6 +499,35 @@ class Yellow_Links_API {
             'author'    => $author,
             'text'      => $text,
             'timestamp' => time() * 1000,
+            'votes'     => 0,
+        ) );
+    }
+
+    public function vote_comment( WP_REST_Request $request ) {
+        $comment_id_param = $request->get_param( 'id' );
+        $type = $request->get_param( 'type' );
+
+        $comment_id = (int) str_replace( 'comment-', '', $comment_id_param );
+        $comment = get_comment( $comment_id );
+        
+        if ( ! $comment ) {
+            return new WP_Error( 'not_found', 'Comment not found.', array( 'status' => 404 ) );
+        }
+
+        $current_votes = (int) get_comment_meta( $comment_id, 'yl_comment_votes', true );
+
+        if ( $type === 'upvote' ) {
+            $current_votes++;
+        } elseif ( $type === 'downvote' ) {
+            $current_votes--;
+        }
+
+        update_comment_meta( $comment_id, 'yl_comment_votes', $current_votes );
+        delete_transient( 'yellow_links_network_cache' );
+
+        return rest_ensure_response( array(
+            'success' => true,
+            'votes'   => $current_votes,
         ) );
     }
 
