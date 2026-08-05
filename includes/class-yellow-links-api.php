@@ -69,6 +69,36 @@ class Yellow_Links_API {
             'callback'            => array( $this, 'export_geojson' ),
             'permission_callback' => '__return_true',
         ) );
+
+        // Current User Info Session Check
+        register_rest_route( 'yellow-links/v1', '/me', array(
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => array( $this, 'get_current_user_info' ),
+            'permission_callback' => '__return_true',
+        ) );
+    }
+
+    public function get_current_user_info( WP_REST_Request $request ) {
+        $user_id = get_current_user_id();
+        if ( $user_id > 0 ) {
+            $user = wp_get_current_user();
+            return rest_ensure_response( array(
+                'logged_in' => true,
+                'user'      => array(
+                    'id'           => 'wp-' . $user_id,
+                    'username'     => $user->user_login,
+                    'email'        => $user->user_email,
+                    'fullName'     => $user->display_name ?: $user->user_login,
+                    'avatarUrl'    => get_avatar_url( $user_id ) ?: '👤',
+                    'role'         => in_array( 'administrator', (array) $user->roles ) ? 'moderator' : 'user',
+                    'registeredAt' => strtotime( $user->user_registered ) * 1000,
+                )
+            ) );
+        }
+        return rest_ensure_response( array(
+            'logged_in' => false,
+            'user'      => null,
+        ) );
     }
 
     private function get_gemini_key() {

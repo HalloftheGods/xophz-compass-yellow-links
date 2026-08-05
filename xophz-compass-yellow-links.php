@@ -217,7 +217,20 @@ class Xophz_Compass_Yellow_Links {
 
                     $nonce = wp_create_nonce('wp_rest');
                     $user_id = get_current_user_id();
-                    $wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_COMPASS_YELLOW_LINKS_URL) . "', version: '" . esc_js(XOPHZ_COMPASS_YELLOW_LINKS_VERSION) . "', userId: " . $user_id . " };</script>";
+                    $user_data = null;
+                    if ( $user_id > 0 ) {
+                        $u = wp_get_current_user();
+                        $user_data = array(
+                            'id'           => 'wp-' . $user_id,
+                            'username'     => $u->user_login,
+                            'email'        => $u->user_email,
+                            'fullName'     => $u->display_name ?: $u->user_login,
+                            'avatarUrl'    => get_avatar_url( $user_id ) ?: '👤',
+                            'role'         => in_array( 'administrator', (array) $u->roles ) ? 'moderator' : 'user',
+                            'registeredAt' => strtotime( $u->user_registered ) * 1000,
+                        );
+                    }
+                    $wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_COMPASS_YELLOW_LINKS_URL) . "', version: '" . esc_js(XOPHZ_COMPASS_YELLOW_LINKS_VERSION) . "', userId: " . $user_id . ", currentUser: " . wp_json_encode( $user_data ) . " };</script>";
                     $dev_html = str_replace('</head>', $wp_api_settings . "\n</head>", $dev_html);
 
                     echo $dev_html;
@@ -250,10 +263,23 @@ class Xophz_Compass_Yellow_Links {
                 $content = str_replace( "'/assets/", "'" . $dist_url . "assets/", $content );
                 $content = str_replace( '"/vite.svg"', '"' . $dist_url . 'vite.svg"', $content );
                 
-                // Inject wpApiSettings for production so API requests have the nonce
+                // Inject wpApiSettings for production so API requests have the nonce and user info
                 $nonce = wp_create_nonce('wp_rest');
                 $user_id = get_current_user_id();
-                $wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_COMPASS_YELLOW_LINKS_URL) . "', version: '" . esc_js(XOPHZ_COMPASS_YELLOW_LINKS_VERSION) . "', userId: " . $user_id . " };</script>";
+                $user_data = null;
+                if ( $user_id > 0 ) {
+                    $u = wp_get_current_user();
+                    $user_data = array(
+                        'id'           => 'wp-' . $user_id,
+                        'username'     => $u->user_login,
+                        'email'        => $u->user_email,
+                        'fullName'     => $u->display_name ?: $u->user_login,
+                        'avatarUrl'    => get_avatar_url( $user_id ) ?: '👤',
+                        'role'         => in_array( 'administrator', (array) $u->roles ) ? 'moderator' : 'user',
+                        'registeredAt' => strtotime( $u->user_registered ) * 1000,
+                    );
+                }
+                $wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_COMPASS_YELLOW_LINKS_URL) . "', version: '" . esc_js(XOPHZ_COMPASS_YELLOW_LINKS_VERSION) . "', userId: " . $user_id . ", currentUser: " . wp_json_encode( $user_data ) . " };</script>";
                 $content = str_replace('</head>', $wp_api_settings . "\n</head>", $content);
                 
                 echo $content;
