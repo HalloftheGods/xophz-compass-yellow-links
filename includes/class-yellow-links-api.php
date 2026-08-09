@@ -28,11 +28,18 @@ class Yellow_Links_API {
             'permission_callback' => '__return_true',
         ) );
 
-        // Link Submission
+        // Link Fetch & Submission
         register_rest_route( 'yellow-links/v1', '/links', array(
-            'methods'             => WP_REST_Server::CREATABLE,
-            'callback'            => array( $this, 'create_link' ),
-            'permission_callback' => '__return_true',
+            array(
+                'methods'             => WP_REST_Server::READABLE,
+                'callback'            => array( $this, 'get_network_links' ),
+                'permission_callback' => '__return_true',
+            ),
+            array(
+                'methods'             => WP_REST_Server::CREATABLE,
+                'callback'            => array( $this, 'create_link' ),
+                'permission_callback' => '__return_true',
+            ),
         ) );
 
         // Voting & Moderation Signal
@@ -74,6 +81,20 @@ class Yellow_Links_API {
         register_rest_route( 'yellow-links/v1', '/me', array(
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => array( $this, 'get_current_user_info' ),
+            'permission_callback' => '__return_true',
+        ) );
+
+        // Update Link Status
+        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/status', array(
+            'methods'             => WP_REST_Server::EDITABLE,
+            'callback'            => array( $this, 'update_link_status' ),
+            'permission_callback' => '__return_true',
+        ) );
+
+        // Delete Link
+        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)', array(
+            'methods'             => WP_REST_Server::DELETABLE,
+            'callback'            => array( $this, 'delete_link' ),
             'permission_callback' => '__return_true',
         ) );
     }
@@ -258,6 +279,8 @@ class Yellow_Links_API {
     }
 
     public function get_network_links( WP_REST_Request $request ) {
+        $this->ensure_seeded_links();
+
         $transient_key = 'yellow_links_network_cache';
         $cached_data = get_transient( $transient_key );
 
@@ -268,9 +291,6 @@ class Yellow_Links_API {
         $all_links = array();
 
         // 1. Fetch Local Links
-        // We'll create a dummy LinkItem to represent the structure expected by Vue MVP, 
-        // normally we would query CPTs. For now, since MVP uses a static array, we just 
-        // provide the data format.
         $local_links = array();
         
         $args = array(
@@ -603,5 +623,174 @@ class Yellow_Links_API {
             'type'     => 'FeatureCollection',
             'features' => $features
         ) );
+    }
+
+    public function update_link_status( WP_REST_Request $request ) {
+        $raw_id  = $request->get_param( 'id' );
+        $status  = sanitize_text_field( $request->get_param( 'status' ) );
+        $post_id = (int) str_replace( 'link-', '', $raw_id );
+
+        if ( ! $post_id || ! get_post( $post_id ) ) {
+            return new WP_Error( 'not_found', 'Link not found.', array( 'status' => 404 ) );
+        }
+
+        $wp_status = 'publish';
+        if ( $status === 'pending' ) {
+            $wp_status = 'pending';
+        } elseif ( $status === 'rejected' ) {
+            $wp_status = 'draft';
+        }
+
+        wp_update_post( array(
+            'ID'          => $post_id,
+            'post_status' => $wp_status,
+        ) );
+
+        return rest_ensure_response( array( 'success' => true, 'id' => $raw_id, 'status' => $status ) );
+    }
+
+    public function delete_link( WP_REST_Request $request ) {
+        $raw_id  = $request->get_param( 'id' );
+        $post_id = (int) str_replace( 'link-', '', $raw_id );
+
+        if ( ! $post_id || ! get_post( $post_id ) ) {
+            return new WP_Error( 'not_found', 'Link not found.', array( 'status' => 404 ) );
+        }
+
+        wp_trash_post( $post_id );
+
+        return rest_ensure_response( array( 'success' => true, 'id' => $raw_id ) );
+    }
+
+    private function ensure_seeded_links() {
+        $existing = get_posts( array(
+            'post_type'      => 'yellow_link',
+            'posts_per_page' => 1,
+            'post_status'    => 'any',
+        ) );
+        if ( ! empty( $existing ) ) {
+            return;
+        }
+
+        $seeds = array(
+            array(
+                'title'       => 'Worldwide Webwork (w⁴)',
+                'url'         => 'https://www.worldwidewebwork.com',
+                'description' => 'The foundational Webwork where digital sovereignty is anchored. Provides the sovereign infrastructure that anchors the entire Hall.',
+                'category'    => 'Ecosystem & Portals',
+                'clicks'      => 18900,
+                'upvotes'     => 620,
+                'tags'        => array( 'WEBWORK', 'INFRASTRUCTURE', 'W4', 'SOVEREIGNTY' ),
+            ),
+            array(
+                'title'       => 'Hall of the Gods',
+                'url'         => 'https://www.hallofthegods.com',
+                'description' => 'Webwork & Protective Umbra. Established MMIV. 20Y+ of Digital Alchemy. A Pantheon of Creators bringing ideas to life.',
+                'category'    => 'Ecosystem & Portals',
+                'clicks'      => 34200,
+                'upvotes'     => 1240,
+                'tags'        => array( 'HALLOFTHEGODS', 'WEBWORK', 'UMBRA', 'SOVEREIGN' ),
+            ),
+            array(
+                'title'       => 'Build a BLOX',
+                'url'         => 'https://www.buildablox.com',
+                'description' => 'Take the hammer. Forge your own realm using the internal guidance of the Compass Suite. You control every pixel, powered by Black BOX’s raw engine.',
+                'category'    => 'Tech & Dev',
+                'clicks'      => 14200,
+                'upvotes'     => 490,
+                'tags'        => array( 'BUILDABLOX', 'FORGE', 'COMPASS', 'BLACKBOX' ),
+            ),
+            array(
+                'title'       => 'BlackBOX WhiteGlove',
+                'url'         => 'https://www.blackboxwhiteglove.com',
+                'description' => 'Industrial-grade power & devoted white-glove engineering stewardship. Shielding you from technical chaos while empowering sovereign architecture.',
+                'category'    => 'Professional Services',
+                'clicks'      => 11400,
+                'upvotes'     => 380,
+                'tags'        => array( 'BLACKBOX', 'WHITEGLOVE', 'STEWARDSHIP', 'SERVICES' ),
+            ),
+            array(
+                'title'       => 'My Compass Consulting',
+                'url'         => 'https://mycompassconsulting.com',
+                'description' => 'Strategic mentorship, navigational clarity, and strategic technology guidance to bring your sovereign digital vision to life.',
+                'category'    => 'Professional Services',
+                'clicks'      => 9800,
+                'upvotes'     => 310,
+                'tags'        => array( 'MYCOMPASS', 'CONSULTING', 'MENTORSHIP', 'STRATEGY' ),
+            ),
+            array(
+                'title'       => 'YouMeOS',
+                'url'         => 'https://www.youmeos.com',
+                'description' => 'Person-to-Person Operating System. The modular vessel designed for the web’s next century, transforming raw Black BOX power into human connection.',
+                'category'    => 'Tech & Dev',
+                'clicks'      => 12900,
+                'upvotes'     => 540,
+                'tags'        => array( 'YOUMEOS', 'P2P', 'OS', 'NEXT-CENTURY' ),
+            ),
+            array(
+                'title'       => 'For The XP — Do It',
+                'url'         => 'https://doit.forthexp.com',
+                'description' => 'Actionable quest engine, gamified experience tracking, and motivation for creators to dream it, build it, and pwn it.',
+                'category'    => 'Ecosystem & Portals',
+                'clicks'      => 8400,
+                'upvotes'     => 290,
+                'tags'        => array( 'FORTHEXP', 'DOIT', 'GAMIFIED', 'QUESTS' ),
+            ),
+            array(
+                'title'       => 'GlowiththeFlow',
+                'url'         => 'https://glowitheflow.com',
+                'description' => 'High-vibe creative alchemy, lifestyle inspiration, and digital artistry binding joy and creation.',
+                'category'    => 'Visual Arts',
+                'clicks'      => 7600,
+                'upvotes'     => 240,
+                'tags'        => array( 'GLOWITHEFLOW', 'CREATIVE', 'ART', 'ALCHEMY' ),
+            ),
+            array(
+                'title'       => 'Sacred Realm Foundation',
+                'url'         => 'https://sacredrealm.org',
+                'description' => 'Protected open archives, digital sanctuary, and sacred knowledge foundations shelter within the Umbra.',
+                'category'    => 'Education & Archives',
+                'clicks'      => 6900,
+                'upvotes'     => 210,
+                'tags'        => array( 'SACREDREALM', 'ARCHIVE', 'SANCTUARY', 'FOUNDATION' ),
+            ),
+            array(
+                'title'       => 'Triforce of the Gods',
+                'url'         => 'https://www.triforceofthegods.com',
+                'description' => 'Power, Wisdom, and Courage. The triune pillar of sovereignty and digital mastery within the Hall of the Gods Webwork.',
+                'category'    => 'Ecosystem & Portals',
+                'clicks'      => 9100,
+                'upvotes'     => 350,
+                'tags'        => array( 'TRIFORCE', 'POWER', 'WISDOM', 'COURAGE' ),
+            ),
+            array(
+                'title'       => 'Hall of the Gods Community Discord',
+                'url'         => 'https://discord.gg/wFtvcfAtnE',
+                'description' => 'Joy, Discord, & Creation. Connect with creators, builders, and nerds wandering the deep code of the Webwork.',
+                'category'    => 'Community',
+                'clicks'      => 15400,
+                'upvotes'     => 720,
+                'tags'        => array( 'DISCORD', 'COMMUNITY', 'CREATORS', 'CHAT' ),
+            ),
+        );
+
+        foreach ( $seeds as $seed ) {
+            $post_id = wp_insert_post( array(
+                'post_title'   => $seed['title'],
+                'post_content' => $seed['description'],
+                'post_type'    => 'yellow_link',
+                'post_status'  => 'publish',
+            ) );
+
+            if ( $post_id && ! is_wp_error( $post_id ) ) {
+                update_post_meta( $post_id, 'yl_url', $seed['url'] );
+                update_post_meta( $post_id, 'yl_clicks', $seed['clicks'] );
+                update_post_meta( $post_id, 'yl_upvotes', $seed['upvotes'] );
+                update_post_meta( $post_id, 'yl_tags', wp_json_encode( $seed['tags'] ) );
+                update_post_meta( $post_id, 'yl_safetyStatus', 'safe' );
+                update_post_meta( $post_id, 'yl_safetyReason', 'Official ecosystem link.' );
+                wp_set_object_terms( $post_id, $seed['category'], 'yellow_link_category' );
+            }
+        }
     }
 }
