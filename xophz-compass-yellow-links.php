@@ -22,6 +22,10 @@ class Xophz_Compass_Yellow_Links {
         require_once XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'includes/class-yellow-links-cpt.php';
         new Yellow_Links_CPT();
 
+        require_once XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'includes/class-link-verifier-cron.php';
+        require_once XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'includes/class-analytics-verifier.php';
+        Yellow_Links_Verifier_Cron::init();
+
         add_action( 'admin_menu', array( $this, 'add_plugin_admin_menu' ) );
         add_action( 'admin_init', array( $this, 'register_settings' ) );
         

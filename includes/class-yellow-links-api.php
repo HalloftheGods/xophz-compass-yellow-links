@@ -7,6 +7,8 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+require_once plugin_dir_path( __FILE__ ) . 'class-stripe-billing.php';
+
 class Yellow_Links_API {
 
     public function register_routes() {
@@ -96,6 +98,25 @@ class Yellow_Links_API {
             'methods'             => WP_REST_Server::DELETABLE,
             'callback'            => array( $this, 'delete_link' ),
             'permission_callback' => '__return_true',
+        ) );
+
+        // Monetization Endpoints
+        register_rest_route( 'yellow-links/v1', '/monetization/buy-slot', array(
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => array( $this, 'buy_slot' ),
+            'permission_callback' => '__return_true',
+        ) );
+
+        register_rest_route( 'yellow-links/v1', '/monetization/approve-slot', array(
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => array( $this, 'approve_slot' ),
+            'permission_callback' => array( $this, 'check_admin_permission' ),
+        ) );
+
+        register_rest_route( 'yellow-links/v1', '/monetization/reject-slot', array(
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => array( $this, 'reject_slot' ),
+            'permission_callback' => array( $this, 'check_admin_permission' ),
         ) );
     }
 
@@ -683,6 +704,32 @@ class Yellow_Links_API {
         wp_trash_post( $post_id );
 
         return rest_ensure_response( array( 'success' => true, 'id' => $raw_id ) );
+    }
+
+    public function check_admin_permission() {
+        return current_user_can( 'manage_options' );
+    }
+
+    public function buy_slot( WP_REST_Request $request ) {
+        // Handled by Yellow_Links_Stripe_Billing class
+        if ( class_exists( 'Yellow_Links_Stripe_Billing' ) ) {
+            return Yellow_Links_Stripe_Billing::handle_buy_slot( $request );
+        }
+        return new WP_Error( 'not_implemented', 'Stripe Billing not implemented yet.', array( 'status' => 501 ) );
+    }
+
+    public function approve_slot( WP_REST_Request $request ) {
+        if ( class_exists( 'Yellow_Links_Stripe_Billing' ) ) {
+            return Yellow_Links_Stripe_Billing::handle_approve_slot( $request );
+        }
+        return new WP_Error( 'not_implemented', 'Stripe Billing not implemented yet.', array( 'status' => 501 ) );
+    }
+
+    public function reject_slot( WP_REST_Request $request ) {
+        if ( class_exists( 'Yellow_Links_Stripe_Billing' ) ) {
+            return Yellow_Links_Stripe_Billing::handle_reject_slot( $request );
+        }
+        return new WP_Error( 'not_implemented', 'Stripe Billing not implemented yet.', array( 'status' => 501 ) );
     }
 
     private function ensure_seeded_links() {
