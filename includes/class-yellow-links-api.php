@@ -798,7 +798,7 @@ class Yellow_Links_API {
                 'tags'        => array( 'YOUMEOS', 'P2P', 'OS', 'NEXT-CENTURY' ),
             ),
             array(
-                'title'       => 'For The XP — Do It',
+                'title'       => 'For The XP - Do It',
                 'url'         => 'https://doit.forthexp.com',
                 'description' => 'Actionable quest engine, gamified experience tracking, and motivation for creators to dream it, build it, and pwn it.',
                 'category'    => 'Ecosystem & Portals',
