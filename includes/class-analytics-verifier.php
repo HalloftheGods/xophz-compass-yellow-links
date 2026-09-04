@@ -47,8 +47,8 @@ class Yellow_Links_Analytics_Verifier {
                 // $ga_key = get_option( $connectors['google']['authentication']['setting_name'], '' );
                 // $pageviews = ... fetch from GA4
                 
-                // Mock value for demo purposes when Google is connected
-                $pageviews = 50000;
+                // Clean empty state when live GA4 reporting is pending configuration
+                $pageviews = 0;
             }
         }
 

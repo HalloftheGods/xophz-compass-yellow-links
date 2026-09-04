@@ -86,20 +86,6 @@ class Yellow_Links_API {
             'permission_callback' => '__return_true',
         ) );
 
-        // Update Link Status
-        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/status', array(
-            'methods'             => WP_REST_Server::EDITABLE,
-            'callback'            => array( $this, 'update_link_status' ),
-            'permission_callback' => '__return_true',
-        ) );
-
-        // Delete Link
-        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)', array(
-            'methods'             => WP_REST_Server::DELETABLE,
-            'callback'            => array( $this, 'delete_link' ),
-            'permission_callback' => '__return_true',
-        ) );
-
         // Monetization Endpoints
         register_rest_route( 'yellow-links/v1', '/monetization/buy-slot', array(
             'methods'             => WP_REST_Server::CREATABLE,
@@ -118,6 +104,20 @@ class Yellow_Links_API {
             'callback'            => array( $this, 'reject_slot' ),
             'permission_callback' => array( $this, 'check_admin_permission' ),
         ) );
+
+        // Update Link Status
+        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/status', array(
+            'methods'             => WP_REST_Server::EDITABLE,
+            'callback'            => array( $this, 'update_link_status' ),
+            'permission_callback' => array( $this, 'check_admin_permission' ),
+        ) );
+
+        // Delete Link
+        register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)', array(
+            'methods'             => WP_REST_Server::DELETABLE,
+            'callback'            => array( $this, 'delete_link' ),
+            'permission_callback' => array( $this, 'check_admin_permission' ),
+        ) );
     }
 
     public function get_current_user_info( WP_REST_Request $request ) {
@@ -132,7 +132,7 @@ class Yellow_Links_API {
                     'email'        => $user->user_email,
                     'fullName'     => $user->display_name ?: $user->user_login,
                     'avatarUrl'    => get_avatar_url( $user_id ) ?: '👤',
-                    'role'         => in_array( 'administrator', (array) $user->roles ) ? 'moderator' : 'user',
+                    'role'         => current_user_can( 'manage_options' ) ? 'moderator' : 'user',
                     'registeredAt' => strtotime( $user->user_registered ) * 1000,
                 )
             ) );

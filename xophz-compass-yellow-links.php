@@ -18,6 +18,14 @@ define( 'XOPHZ_COMPASS_YELLOW_LINKS_PATH', plugin_dir_path( __FILE__ ) );
 define( 'XOPHZ_COMPASS_YELLOW_LINKS_URL', plugin_dir_url( __FILE__ ) );
 
 class Xophz_Compass_Yellow_Links {
+
+    /**
+     * Dev proxy instance.
+     *
+     * @var Xophz_Compass_Dev_Proxy|null
+     */
+    protected $dev_proxy = null;
+
     public function __construct() {
         require_once XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'includes/class-yellow-links-cpt.php';
         new Yellow_Links_CPT();
@@ -32,10 +40,25 @@ class Xophz_Compass_Yellow_Links {
         // Flush rewrites when setting is saved
         add_action( 'update_option_xophz_compass_yellow_links_custom_slug', array( $this, 'flush_rewrites_on_save' ), 10, 2 );
 
-        // Public rewrite and template
-        add_filter( 'query_vars', array( $this, 'register_query_vars' ) );
-        add_action( 'init', array( $this, 'register_rewrites' ) );
-        add_action( 'template_redirect', array( $this, 'template_redirect' ) );
+        // Consolidated Dev Proxy (Port 8088)
+        if ( class_exists( 'Xophz_Compass_Dev_Proxy' ) ) {
+            $this->dev_proxy = new Xophz_Compass_Dev_Proxy( array(
+                'slug'                 => 'yellow-links',
+                'default_slug'         => 'yellow-links',
+                'dev_port'             => 8088,
+                'query_var'            => 'xophz_compass_yellow_links',
+                'plugin_path'          => XOPHZ_COMPASS_YELLOW_LINKS_PATH,
+                'plugin_url'           => XOPHZ_COMPASS_YELLOW_LINKS_URL,
+                'version'              => XOPHZ_COMPASS_YELLOW_LINKS_VERSION,
+                'candidate_dist_paths' => array(
+                    XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'public/dist/index.html',
+                    dirname( XOPHZ_COMPASS_YELLOW_LINKS_PATH, 3 ) . '/apps/yellow-links/dist/index.html',
+                    ABSPATH . 'apps/yellow-links/dist/index.html',
+                ),
+            ) );
+
+            add_filter( 'xophz_compass_dev_proxy_yellow-links_api_settings', array( $this, 'filter_api_settings' ), 10, 2 );
+        }
 
         // API endpoints
         add_action( 'rest_api_init', array( $this, 'register_api_endpoints' ) );
@@ -155,143 +178,25 @@ class Xophz_Compass_Yellow_Links {
         }
     }
 
-    public function register_query_vars( $vars ) {
-        $vars[] = 'xophz_compass_yellow_links';
-        return $vars;
-    }
-
     public function register_rewrites() {
-        $slug = get_option( 'xophz_compass_yellow_links_custom_slug', 'yellow-links' );
-        
-        if ( ! empty( $slug ) ) {
-            add_rewrite_rule(
-                '^' . $slug . '/?$',
-                'index.php?xophz_compass_yellow_links=1',
-                'top'
-            );
-            // Catch-all for frontend routing
-            add_rewrite_rule(
-                '^' . $slug . '/(.*)?$',
-                'index.php?xophz_compass_yellow_links=1',
-                'top'
-            );
+        if ( $this->dev_proxy ) {
+            $this->dev_proxy->register_rewrites();
         }
     }
 
-    private function is_dev_mode() {
-        return ( defined( 'WP_ENV' ) && WP_ENV === 'development' ) || ( defined( 'WP_DEBUG' ) && WP_DEBUG );
+    public function get_dev_proxy() {
+        return $this->dev_proxy;
     }
 
-    public function template_redirect() {
-        if ( get_query_var( 'xophz_compass_yellow_links' ) ) {
-            $is_dev = $this->is_dev_mode();
-            $vite_port = '8088';
-            if ( isset( $_SERVER['HTTP_HOST'] ) ) {
-                $host_parts = explode(':', $_SERVER['HTTP_HOST']);
-                $wp_host = $host_parts[0];
-            } else {
-                $wp_host = wp_parse_url( home_url(), PHP_URL_HOST );
+    public function filter_api_settings( array $payload, string $slug ): array {
+        if ( 'yellow-links' === $slug && isset( $payload['currentUser'] ) && is_array( $payload['currentUser'] ) ) {
+            $user_id = (int) ( $payload['userId'] ?? 0 );
+            if ( $user_id > 0 ) {
+                $u = wp_get_current_user();
+                $payload['currentUser']['role'] = current_user_can( 'manage_options' ) ? 'moderator' : 'user';
             }
-            $vite_url = "//" . $wp_host . ":" . $vite_port;
-
-            if ( $is_dev ) {
-                $dev_hosts = array( 'compass', '127.0.0.1', 'localhost' );
-                $dev_html  = false;
-                foreach ( $dev_hosts as $host ) {
-                    $context  = stream_context_create( array( 'http' => array( 'timeout' => 1 ) ) );
-                    $dev_html = @file_get_contents( "http://{$host}:{$vite_port}/", false, $context );
-                    if ( $dev_html ) {
-                        break;
-                    }
-                }
-
-                if ( $dev_html ) {
-                    // Rewrite relative src/href/import/from for dev server
-                    $dev_html = str_replace('src="/', 'src="' . $vite_url . '/', $dev_html);
-                    $dev_html = str_replace('href="/', 'href="' . $vite_url . '/', $dev_html);
-                    $dev_html = str_replace('import("/', 'import("' . $vite_url . '/', $dev_html);
-                    $dev_html = str_replace('from "/', 'from="' . $vite_url . '/', $dev_html);
-                    $dev_html = str_replace("from '/", "from '" . $vite_url . "/", $dev_html);
-
-                    // Inject Vite client if not present
-                    if (strpos($dev_html, '/@vite/client') === false) {
-                        $vite_client = '<script type="module" src="' . esc_url($vite_url) . '/@vite/client"></script>';
-                        $dev_html = str_replace('</head>', $vite_client . "\n</head>", $dev_html);
-                    }
-
-                    $nonce = wp_create_nonce('wp_rest');
-                    $user_id = get_current_user_id();
-                    $user_data = null;
-                    if ( $user_id > 0 ) {
-                        $u = wp_get_current_user();
-                        $user_data = array(
-                            'id'           => 'wp-' . $user_id,
-                            'username'     => $u->user_login,
-                            'email'        => $u->user_email,
-                            'fullName'     => $u->display_name ?: $u->user_login,
-                            'avatarUrl'    => get_avatar_url( $user_id ) ?: '👤',
-                            'role'         => in_array( 'administrator', (array) $u->roles ) ? 'moderator' : 'user',
-                            'registeredAt' => strtotime( $u->user_registered ) * 1000,
-                        );
-                    }
-                    $wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_COMPASS_YELLOW_LINKS_URL) . "', version: '" . esc_js(XOPHZ_COMPASS_YELLOW_LINKS_VERSION) . "', userId: " . $user_id . ", currentUser: " . wp_json_encode( $user_data ) . " };</script>";
-                    $dev_html = str_replace('</head>', $wp_api_settings . "\n</head>", $dev_html);
-
-                    echo $dev_html;
-                    exit;
-                }
-            }
-
-            // Load production build output
-            $candidate_paths = array(
-                XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'public/dist/index.html',
-                dirname( XOPHZ_COMPASS_YELLOW_LINKS_PATH, 3 ) . '/apps/yellow-links/dist/index.html',
-                ABSPATH . 'apps/yellow-links/dist/index.html',
-            );
-
-            $index_path = false;
-            $dist_url   = XOPHZ_COMPASS_YELLOW_LINKS_URL . 'public/dist/';
-
-            foreach ( $candidate_paths as $path ) {
-                if ( file_exists( $path ) ) {
-                    $index_path = $path;
-                    break;
-                }
-            }
-
-            if ( $index_path ) {
-                $content = file_get_contents( $index_path );
-                
-                // Rewrite absolute paths for production assets
-                $content = str_replace( '"/assets/', '"' . $dist_url . 'assets/', $content );
-                $content = str_replace( "'/assets/", "'" . $dist_url . "assets/", $content );
-                $content = str_replace( '"/vite.svg"', '"' . $dist_url . 'vite.svg"', $content );
-                
-                // Inject wpApiSettings for production so API requests have the nonce and user info
-                $nonce = wp_create_nonce('wp_rest');
-                $user_id = get_current_user_id();
-                $user_data = null;
-                if ( $user_id > 0 ) {
-                    $u = wp_get_current_user();
-                    $user_data = array(
-                        'id'           => 'wp-' . $user_id,
-                        'username'     => $u->user_login,
-                        'email'        => $u->user_email,
-                        'fullName'     => $u->display_name ?: $u->user_login,
-                        'avatarUrl'    => get_avatar_url( $user_id ) ?: '👤',
-                        'role'         => in_array( 'administrator', (array) $u->roles ) ? 'moderator' : 'user',
-                        'registeredAt' => strtotime( $u->user_registered ) * 1000,
-                    );
-                }
-                $wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw(rest_url()) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw(XOPHZ_COMPASS_YELLOW_LINKS_URL) . "', version: '" . esc_js(XOPHZ_COMPASS_YELLOW_LINKS_VERSION) . "', userId: " . $user_id . ", currentUser: " . wp_json_encode( $user_data ) . " };</script>";
-                $content = str_replace('</head>', $wp_api_settings . "\n</head>", $content);
-                
-                echo $content;
-            } else {
-                echo '<h2>Yellow Links is not built yet.</h2><p>Please run <code>pnpm build:yellow-links</code> in the workspace root or <code>npm run build</code> in <code>apps/yellow-links</code>.</p>';
-            }
-            exit;
         }
+        return $payload;
     }
 }
 
