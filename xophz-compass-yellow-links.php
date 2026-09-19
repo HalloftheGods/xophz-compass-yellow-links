@@ -1,6 +1,7 @@
 <?php
 /**
  * Plugin Name:       Xophz Yellow Links
+ * Plugin URI:        https://yellowlinks.worldwidewebwork.com
  * Description:       Standalone WordPress backend and router for the Yellow Links web app.
  * Version:           26.9.17
  * Author:            Hall of the Gods, Inc.
