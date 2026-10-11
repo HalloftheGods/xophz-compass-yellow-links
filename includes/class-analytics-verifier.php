@@ -7,6 +7,8 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-connectors.php';
+
 class Yellow_Links_Analytics_Verifier {
 
     public static function get_verified_pageviews() {
@@ -23,8 +25,8 @@ class Yellow_Links_Analytics_Verifier {
             $connectors = wp_get_connectors();
             
             // Try Plausible first
-            if ( ! empty( $connectors['plausible']['authentication']['api_key'] ) ) {
-                $api_key = get_option( $connectors['plausible']['authentication']['api_key'], '' );
+            $api_key = Yellow_Links_Connectors::get_key( Yellow_Links_Connectors::PLAUSIBLE );
+            if ( '' !== $api_key ) {
                 $domain = get_option( 'plausible_domain', '' ); // Assuming domain is stored here
 
                 if ( ! empty( $api_key ) && ! empty( $domain ) ) {

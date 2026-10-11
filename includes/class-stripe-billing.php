@@ -7,46 +7,25 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-connectors.php';
+
 class Yellow_Links_Stripe_Billing {
 
-    private static function get_stripe_keys() {
-        $secret_key = '';
-        $public_key = '';
-
-        if ( function_exists( 'wp_get_connectors' ) ) {
-            $connectors = wp_get_connectors();
-            if ( ! empty( $connectors['stripe']['authentication']['secret_key'] ) ) {
-                $secret_key = get_option( $connectors['stripe']['authentication']['secret_key'], '' );
-            }
-            if ( ! empty( $connectors['stripe']['authentication']['public_key'] ) ) {
-                $public_key = get_option( $connectors['stripe']['authentication']['public_key'], '' );
-            }
-        }
-
-        if ( empty( $secret_key ) ) {
-            $secret_key = getenv( 'STRIPE_SECRET_KEY' );
-        }
-        if ( empty( $public_key ) ) {
-            $public_key = getenv( 'STRIPE_PUBLIC_KEY' );
-        }
-
-        return array(
-            'secret' => $secret_key,
-            'public' => $public_key
-        );
+    private static function get_secret_key() {
+        return Yellow_Links_Connectors::get_key( Yellow_Links_Connectors::STRIPE_SECRET_KEY );
     }
 
     private static function api_request( $endpoint, $method = 'POST', $body = array() ) {
-        $keys = self::get_stripe_keys();
-        if ( empty( $keys['secret'] ) ) {
-            return new WP_Error( 'no_stripe_key', 'Stripe API key is not configured in WP Connectors.', array( 'status' => 500 ) );
+        $secret_key = self::get_secret_key();
+        if ( empty( $secret_key ) ) {
+            return new WP_Error( 'no_stripe_key', 'Stripe API key is not configured in Settings > Connectors (Stripe Secret Key).', array( 'status' => 500 ) );
         }
 
         $url = 'https://api.stripe.com/v1/' . $endpoint;
         
         $args = array(
             'headers' => array(
-                'Authorization' => 'Bearer ' . $keys['secret'],
+                'Authorization' => 'Bearer ' . $secret_key,
             ),
             'method'  => $method,
             'timeout' => 30,

@@ -26,7 +26,7 @@ Standalone WordPress backend and router for the **Yellow Links** web application
 
 - **WordPress:** 5.8+
 - **PHP:** 7.4+ (PHP 8.0+ recommended)
-- **Environment:** `GEMINI_API_KEY` environment variable configured for AI link analysis features.
+- **Gemini key:** Add the Google API key under **Settings > Connectors** (Google) for AI link analysis features. The key is sent to Google in the `x-goog-api-key` header and is never placed in a URL.
 
 ---
 
@@ -61,6 +61,7 @@ All endpoints are registered under the `yellow-links/v1` REST namespace:
 | `Xophz_Compass_Yellow_Links` | `xophz-compass-yellow-links.php` | Main plugin bootstrapper, rewrite rules, admin settings, and SPA template loader |
 | `Yellow_Links_CPT` | `includes/class-yellow-links-cpt.php` | CPT (`yellow_link`), taxonomy (`yellow_link_category`), and post meta registration |
 | `Yellow_Links_API` | `includes/class-yellow-links-api.php` | REST API endpoint handlers and Gemini AI client integration |
+| `Yellow_Links_Connectors` | `includes/class-yellow-links-connectors.php` | Single resolver for every credential (Gemini, Stripe, Plausible) over the WordPress Connectors API |
 
 ### Post Meta Fields (`yellow_link`)
 
@@ -79,7 +80,7 @@ All endpoints are registered under the `yellow-links/v1` REST namespace:
 3. Configure settings under **Settings > Yellow Links**:
    - **Deployment Slug**: Set custom endpoint URL (defaults to `yellow-links`).
    - **Sister Sites (Federation)**: Enter sister site URLs (one per line) to aggregate network links.
-4. Ensure `GEMINI_API_KEY` is set in your environment if using AI link analysis features.
+4. Add the Google (Gemini) key under **Settings > Connectors** if using AI link analysis features. For paid ad slots, add the Stripe secret key there too.
 
 ---
 

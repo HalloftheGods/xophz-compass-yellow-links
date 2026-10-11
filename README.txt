@@ -29,12 +29,15 @@ Key Features:
 == Frequently Asked Questions ==
 
 = How do I configure Gemini AI features? =
-Set the `GEMINI_API_KEY` environment variable in your server or Docker container environment.
+Add your Google API key under Settings > Connectors (Google). The key is sent in the x-goog-api-key header, never in a URL.
 
 = How does Sister Sites Federation work? =
 Enter one URL per line under Settings > Yellow Links for other Yellow Links installations. The plugin will fetch and merge directory entries with automatic transient caching.
 
 == Changelog ==
+
+= 26.10.10 =
+* Security: the Gemini key is sent in the x-goog-api-key header instead of the URL. Gemini, Stripe and Plausible credentials resolve only through the WordPress Connectors API; the GEMINI_API_KEY, STRIPE_SECRET_KEY and STRIPE_PUBLIC_KEY environment variable reads are removed.
 
 = 26.7.21 =
 * Initial standalone release with REST API endpoints, custom post type, Gemini AI link analysis, and federated network routing.

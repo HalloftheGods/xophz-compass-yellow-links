@@ -31,6 +31,9 @@ class Xophz_Compass_Yellow_Links {
         require_once XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'includes/class-yellow-links-cpt.php';
         new Yellow_Links_CPT();
 
+        require_once XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'includes/class-yellow-links-connectors.php';
+        Yellow_Links_Connectors::init();
+
         require_once XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'includes/class-link-verifier-cron.php';
         require_once XOPHZ_COMPASS_YELLOW_LINKS_PATH . 'includes/class-analytics-verifier.php';
         Yellow_Links_Verifier_Cron::init();

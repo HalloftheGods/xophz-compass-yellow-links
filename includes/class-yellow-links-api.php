@@ -7,6 +7,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-connectors.php';
 require_once plugin_dir_path( __FILE__ ) . 'class-stripe-billing.php';
 
 class Yellow_Links_API {
@@ -144,17 +145,7 @@ class Yellow_Links_API {
     }
 
     private function get_gemini_key() {
-        if ( function_exists( 'wp_get_connectors' ) ) {
-            $connectors = wp_get_connectors();
-            if ( ! empty( $connectors['google']['authentication']['setting_name'] ) ) {
-                $api_key = get_option( $connectors['google']['authentication']['setting_name'], '' );
-                if ( ! empty( $api_key ) ) {
-                    return $api_key;
-                }
-            }
-        }
-        // Read from the environment where Docker passes it
-        return getenv( 'GEMINI_API_KEY' );
+        return Yellow_Links_Connectors::get_key( Yellow_Links_Connectors::GOOGLE );
     }
 
     private function get_gemini_model() {
@@ -173,11 +164,11 @@ class Yellow_Links_API {
     private function call_gemini( $prompt, $schema ) {
         $api_key = $this->get_gemini_key();
         if ( empty( $api_key ) ) {
-            return new WP_Error( 'no_api_key', 'GEMINI_API_KEY is not configured.', array( 'status' => 500 ) );
+            return new WP_Error( 'no_api_key', 'The Gemini API key is not configured in Settings > Connectors (Google).', array( 'status' => 500 ) );
         }
 
         $model = $this->get_gemini_model();
-        $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . $model . ':generateContent?key=' . $api_key;
+        $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . $model . ':generateContent';
 
         $body = array(
             'contents' => array(
@@ -197,8 +188,9 @@ class Yellow_Links_API {
 
         $response = wp_remote_post( $url, array(
             'headers'     => array(
-                'Content-Type' => 'application/json',
-                'User-Agent'   => 'aistudio-build'
+                'Content-Type'   => 'application/json',
+                'User-Agent'     => 'aistudio-build',
+                'x-goog-api-key' => $api_key,
             ),
             'body'        => wp_json_encode( $body ),
             'method'      => 'POST',
