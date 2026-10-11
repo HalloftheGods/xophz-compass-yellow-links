@@ -9,9 +9,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-connectors.php';
 require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-ai-gate.php';
+require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-rate-limit.php';
+require_once plugin_dir_path( __FILE__ ) . 'trait-yellow-links-write-handlers.php';
 require_once plugin_dir_path( __FILE__ ) . 'class-stripe-billing.php';
 
 class Yellow_Links_API {
+    use Yellow_Links_Write_Handlers;
 
     public function register_routes() {
         // Both routes spend the owner's Gemini key: logged-in users only, plus a per-user hourly limit.
@@ -33,6 +36,9 @@ class Yellow_Links_API {
             'permission_callback' => '__return_true',
         ) );
 
+        // Reading the directory is public. Writing to it needs a logged-in user, except a click,
+        // which is counted for anyone but limited per address (see record_click).
+
         // Link Fetch & Submission
         register_rest_route( 'yellow-links/v1', '/links', array(
             array(
@@ -43,7 +49,7 @@ class Yellow_Links_API {
             array(
                 'methods'             => WP_REST_Server::CREATABLE,
                 'callback'            => array( $this, 'create_link' ),
-                'permission_callback' => '__return_true',
+                'permission_callback' => 'is_user_logged_in',
             ),
         ) );
 
@@ -51,10 +57,10 @@ class Yellow_Links_API {
         register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/vote', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'vote_link' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => 'is_user_logged_in',
         ) );
 
-        // Click Tracking
+        // Click Tracking: public on purpose, one count per address per link per hour.
         register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/click', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'record_click' ),
@@ -65,14 +71,14 @@ class Yellow_Links_API {
         register_rest_route( 'yellow-links/v1', '/links/(?P<id>[a-zA-Z0-9_-]+)/comment', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'add_comment' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => 'is_user_logged_in',
         ) );
 
         // Comment Voting
         register_rest_route( 'yellow-links/v1', '/comments/(?P<id>[a-zA-Z0-9_-]+)/vote', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'vote_comment' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => 'is_user_logged_in',
         ) );
 
         // GeoJSON Open Data Export
@@ -89,11 +95,12 @@ class Yellow_Links_API {
             'permission_callback' => '__return_true',
         ) );
 
-        // Monetization Endpoints
+        // Monetization Endpoints. buy-slot only opens a Stripe PaymentIntent for the caller's own
+        // link; nothing is marked paid until an admin captures it in approve-slot.
         register_rest_route( 'yellow-links/v1', '/monetization/buy-slot', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'buy_slot' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => 'is_user_logged_in',
         ) );
 
         register_rest_route( 'yellow-links/v1', '/monetization/approve-slot', array(
@@ -433,196 +440,8 @@ class Yellow_Links_API {
         return rest_ensure_response( $all_links );
     }
 
-    public function create_link( WP_REST_Request $request ) {
-        $url          = sanitize_text_field( $request->get_param( 'url' ) );
-        $title        = sanitize_text_field( $request->get_param( 'title' ) );
-        $description  = sanitize_textarea_field( $request->get_param( 'description' ) );
-        $category     = sanitize_text_field( $request->get_param( 'category' ) );
-        $submitter    = sanitize_text_field( $request->get_param( 'submitter' ) );
-        $safetyStatus = sanitize_text_field( $request->get_param( 'safetyStatus' ) ?: 'safe' );
-        $safetyReason = sanitize_text_field( $request->get_param( 'safetyReason' ) ?: 'Community submission.' );
-        $tags_input   = $request->get_param( 'tags' );
-        $trustTier    = sanitize_text_field( $request->get_param( 'trustTier' ) ?: 'community' );
-        $neighborhood = sanitize_text_field( $request->get_param( 'neighborhood' ) );
-        $zip          = sanitize_text_field( $request->get_param( 'zip' ) );
-
-        if ( empty( $url ) || empty( $title ) ) {
-            return new WP_Error( 'missing_fields', 'URL and Title are required.', array( 'status' => 400 ) );
-        }
-
-        // Parse tags
-        if ( is_array( $tags_input ) ) {
-            $tags_array = array_map( 'sanitize_text_field', $tags_input );
-        } elseif ( is_string( $tags_input ) ) {
-            $tags_array = array_filter( array_map( 'trim', explode( ',', $tags_input ) ) );
-        } else {
-            $tags_array = array( 'GENERAL' );
-        }
-
-        $auto_publish = get_option( 'xophz_compass_yellow_links_auto_publish', '1' );
-        $post_status  = ( $auto_publish === '1' ) ? 'publish' : 'pending';
-
-        $post_id = wp_insert_post( array(
-            'post_title'   => $title,
-            'post_content' => $description,
-            'post_status'  => $post_status,
-            'post_type'    => 'yellow_link',
-        ) );
-
-        if ( is_wp_error( $post_id ) ) {
-            return $post_id;
-        }
-
-        // Assign Category
-        if ( !empty( $category ) ) {
-            wp_set_object_terms( $post_id, $category, 'yellow_link_category' );
-        }
-
-        // Save Meta
-        update_post_meta( $post_id, 'yl_url', $url );
-        update_post_meta( $post_id, 'yl_tags', wp_json_encode( $tags_array ) );
-        update_post_meta( $post_id, 'yl_safetyStatus', $safetyStatus );
-        update_post_meta( $post_id, 'yl_safetyReason', $safetyReason );
-        update_post_meta( $post_id, 'yl_upvotes', 1 );
-        update_post_meta( $post_id, 'yl_downvotes', 0 );
-        update_post_meta( $post_id, 'yl_clicks', 0 );
-        update_post_meta( $post_id, 'yl_trust_tier', $trustTier );
-        if ( !empty( $neighborhood ) ) update_post_meta( $post_id, 'yl_neighborhood', $neighborhood );
-        if ( !empty( $zip ) ) update_post_meta( $post_id, 'yl_zip', $zip );
-
-        // Clear transient
-        delete_transient( 'yellow_links_network_cache' );
-
-        return rest_ensure_response( array(
-            'success'   => true,
-            'id'        => 'link-' . $post_id,
-            'status'    => $post_status,
-            'message'   => ( $post_status === 'pending' ) ? 'Link submitted for moderation.' : 'Link published successfully.',
-        ) );
-    }
-
-    public function vote_link( WP_REST_Request $request ) {
-        $raw_id = $request->get_param( 'id' );
-        $type   = sanitize_text_field( $request->get_param( 'type' ) );
-        $post_id = (int) str_replace( 'link-', '', $raw_id );
-
-        if ( !$post_id || get_post_type( $post_id ) !== 'yellow_link' ) {
-            return new WP_Error( 'invalid_id', 'Invalid yellow_link ID.', array( 'status' => 404 ) );
-        }
-
-        $upvotes   = (int) get_post_meta( $post_id, 'yl_upvotes', true );
-        $downvotes = (int) get_post_meta( $post_id, 'yl_downvotes', true );
-
-        if ( $type === 'up' ) {
-            $upvotes++;
-            update_post_meta( $post_id, 'yl_upvotes', $upvotes );
-        } elseif ( $type === 'down' ) {
-            $downvotes++;
-            update_post_meta( $post_id, 'yl_downvotes', $downvotes );
-        }
-
-        // Calculate safety status update
-        $safetyStatus = get_post_meta( $post_id, 'yl_safetyStatus', true ) ?: 'safe';
-        $safetyReason = get_post_meta( $post_id, 'yl_safetyReason', true ) ?: '';
-
-        if ( $downvotes > 15 && $downvotes > ( $upvotes * 2 ) ) {
-            $safetyStatus = 'unsafe';
-            $safetyReason = 'Community Flagging: Excessive warning reports submitted by directory visitors.';
-            update_post_meta( $post_id, 'yl_safetyStatus', $safetyStatus );
-            update_post_meta( $post_id, 'yl_safetyReason', $safetyReason );
-        } elseif ( $downvotes > 5 && $downvotes > $upvotes ) {
-            $safetyStatus = 'warning';
-            $safetyReason = 'Community Warning: Multiple users reported potential safety issues.';
-            update_post_meta( $post_id, 'yl_safetyStatus', $safetyStatus );
-            update_post_meta( $post_id, 'yl_safetyReason', $safetyReason );
-        }
-
-        delete_transient( 'yellow_links_network_cache' );
-
-        return rest_ensure_response( array(
-            'id'           => 'link-' . $post_id,
-            'upvotes'      => $upvotes,
-            'downvotes'    => $downvotes,
-            'safetyStatus' => $safetyStatus,
-            'safetyReason' => $safetyReason,
-        ) );
-    }
-
-    public function record_click( WP_REST_Request $request ) {
-        $raw_id  = $request->get_param( 'id' );
-        $post_id = (int) str_replace( 'link-', '', $raw_id );
-
-        if ( $post_id && get_post_type( $post_id ) === 'yellow_link' ) {
-            $clicks = (int) get_post_meta( $post_id, 'yl_clicks', true );
-            $clicks++;
-            update_post_meta( $post_id, 'yl_clicks', $clicks );
-            delete_transient( 'yellow_links_network_cache' );
-            return rest_ensure_response( array( 'id' => 'link-' . $post_id, 'clicks' => $clicks ) );
-        }
-
-        return new WP_Error( 'invalid_id', 'Invalid link ID.', array( 'status' => 404 ) );
-    }
-
-    public function add_comment( WP_REST_Request $request ) {
-        $raw_id  = $request->get_param( 'id' );
-        $post_id = (int) str_replace( 'link-', '', $raw_id );
-        $author  = sanitize_text_field( $request->get_param( 'author' ) ?: 'Anonymous' );
-        $text    = sanitize_textarea_field( $request->get_param( 'text' ) );
-
-        if ( !$post_id || empty( $text ) ) {
-            return new WP_Error( 'missing_fields', 'Post ID and comment text are required.', array( 'status' => 400 ) );
-        }
-
-        $comment_id = wp_insert_comment( array(
-            'comment_post_ID'      => $post_id,
-            'comment_author'       => $author,
-            'comment_content'      => $text,
-            'comment_approved'     => 1,
-            'comment_type'         => 'comment',
-        ) );
-
-        if ( !$comment_id ) {
-            return new WP_Error( 'comment_failed', 'Could not save comment.', array( 'status' => 500 ) );
-        }
-
-        delete_transient( 'yellow_links_network_cache' );
-
-        return rest_ensure_response( array(
-            'id'        => 'comment-' . $comment_id,
-            'author'    => $author,
-            'text'      => $text,
-            'timestamp' => time() * 1000,
-            'votes'     => 0,
-        ) );
-    }
-
-    public function vote_comment( WP_REST_Request $request ) {
-        $comment_id_param = $request->get_param( 'id' );
-        $type = $request->get_param( 'type' );
-
-        $comment_id = (int) str_replace( 'comment-', '', $comment_id_param );
-        $comment = get_comment( $comment_id );
-        
-        if ( ! $comment ) {
-            return new WP_Error( 'not_found', 'Comment not found.', array( 'status' => 404 ) );
-        }
-
-        $current_votes = (int) get_comment_meta( $comment_id, 'yl_comment_votes', true );
-
-        if ( $type === 'upvote' ) {
-            $current_votes++;
-        } elseif ( $type === 'downvote' ) {
-            $current_votes--;
-        }
-
-        update_comment_meta( $comment_id, 'yl_comment_votes', $current_votes );
-        delete_transient( 'yellow_links_network_cache' );
-
-        return rest_ensure_response( array(
-            'success' => true,
-            'votes'   => $current_votes,
-        ) );
-    }
+    // create_link, vote_link, record_click, add_comment and vote_comment live in
+    // Yellow_Links_Write_Handlers (trait-yellow-links-write-handlers.php).
 
     public function export_geojson( WP_REST_Request $request ) {
         $args = array(

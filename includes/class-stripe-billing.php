@@ -8,8 +8,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-connectors.php';
+require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-rate-limit.php';
 
 class Yellow_Links_Stripe_Billing {
+
+    /** Smallest and largest slot price a caller may ask for, in cents ($5 to $5,000). */
+    const MIN_SLOT_CENTS = 500;
+    const MAX_SLOT_CENTS = 500000;
 
     private static function get_secret_key() {
         return Yellow_Links_Connectors::get_key( Yellow_Links_Connectors::STRIPE_SECRET_KEY );
@@ -53,18 +58,74 @@ class Yellow_Links_Stripe_Billing {
         return $data;
     }
 
+    /**
+     * Opens a Stripe PaymentIntent for a slot on one link. The caller has to be logged in and has
+     * to own the link (or be an admin). Nothing here marks a slot paid: the intent uses manual
+     * capture, and a slot only goes active in handle_approve_slot(), after an admin captures the
+     * payment and Stripe confirms it. A payment already waiting for approval is never replaced.
+     */
     public static function handle_buy_slot( WP_REST_Request $request ) {
-        $link_id = $request->get_param( 'link_id' );
-        $buyer_email = sanitize_email( $request->get_param( 'buyer_email' ) );
-        $slot_price = (int) $request->get_param( 'price_cents' ); // e.g. 5000 for $50.00
+        $user_id = get_current_user_id();
+        if ( ! $user_id ) {
+            return new WP_Error( 'rest_forbidden', 'Log in to buy a slot.', array( 'status' => 401 ) );
+        }
 
-        if ( empty( $link_id ) || empty( $buyer_email ) || empty( $slot_price ) ) {
-            return new WP_Error( 'missing_params', 'link_id, buyer_email, and price_cents are required.', array( 'status' => 400 ) );
+        $link_id     = $request->get_param( 'link_id' );
+        $buyer_email = $request->get_param( 'buyer_email' );
+        $buyer_email = is_string( $buyer_email ) ? sanitize_email( $buyer_email ) : '';
+        if ( '' === $buyer_email ) {
+            $buyer_email = sanitize_email( wp_get_current_user()->user_email );
+        }
+
+        if ( ! is_string( $link_id ) || '' === $link_id || ! is_email( $buyer_email ) ) {
+            return new WP_Error( 'missing_params', 'link_id and a valid buyer_email are required.', array( 'status' => 400 ) );
         }
 
         $post_id = (int) str_replace( 'link-', '', $link_id );
-        if ( ! get_post( $post_id ) ) {
+        if ( $post_id <= 0 || 'yellow_link' !== get_post_type( $post_id ) || ! in_array( get_post_status( $post_id ), array( 'publish', 'pending' ), true ) ) {
             return new WP_Error( 'not_found', 'Yellow Link not found.', array( 'status' => 404 ) );
+        }
+
+        if ( (int) get_post_field( 'post_author', $post_id ) !== $user_id && ! current_user_can( 'manage_options' ) ) {
+            return new WP_Error( 'forbidden', 'You can only buy a slot for your own link.', array( 'status' => 403 ) );
+        }
+
+        if ( 'active' === get_post_meta( $post_id, 'yl_slot_status', true ) ) {
+            return new WP_Error( 'slot_active', 'This link already has an active slot.', array( 'status' => 409 ) );
+        }
+
+        // The site can fix the price (filter or option, in cents); otherwise the caller's price is
+        // taken, but only inside a sane range.
+        $fixed_price = (int) apply_filters( 'yellow_links_slot_price_cents', (int) get_option( 'xophz_compass_yellow_links_slot_price_cents', 0 ), $post_id );
+        $slot_price  = $fixed_price > 0 ? $fixed_price : (int) $request->get_param( 'price_cents' ); // e.g. 5000 for $50.00
+        if ( $slot_price < self::MIN_SLOT_CENTS || $slot_price > self::MAX_SLOT_CENTS ) {
+            return new WP_Error( 'invalid_price', 'price_cents must be between ' . self::MIN_SLOT_CENTS . ' and ' . self::MAX_SLOT_CENTS . '.', array( 'status' => 400 ) );
+        }
+
+        // Each attempt that gets this far costs Stripe calls, so it is limited per user and per
+        // address. Requests refused above do not count.
+        $limited = Yellow_Links_Rate_Limit::hit( 'buy_slot_user', (string) $user_id, 5, HOUR_IN_SECONDS, 'Too many payment attempts. Please try again later.' );
+        if ( is_wp_error( $limited ) ) {
+            return $limited;
+        }
+        $limited = Yellow_Links_Rate_Limit::hit( 'buy_slot_ip', Yellow_Links_Rate_Limit::client_ip(), 10, HOUR_IN_SECONDS, 'Too many payment attempts from this network. Please try again later.' );
+        if ( is_wp_error( $limited ) ) {
+            return $limited;
+        }
+
+        // A payment that is authorized and waiting for an admin must not be overwritten, or the
+        // admin would capture a different intent than the one the buyer approved.
+        $earlier = get_post_meta( $post_id, 'yl_stripe_pi', true );
+        if ( is_string( $earlier ) && preg_match( '/^pi_[A-Za-z0-9]+$/', $earlier ) ) {
+            $existing = self::api_request( 'payment_intents/' . $earlier, 'GET' );
+            if ( is_wp_error( $existing ) ) {
+                $data = $existing->get_error_data();
+                if ( ! is_array( $data ) || 404 !== ( $data['status'] ?? 0 ) ) {
+                    return $existing;
+                }
+            } elseif ( in_array( $existing['status'] ?? '', array( 'requires_capture', 'processing', 'succeeded' ), true ) ) {
+                return new WP_Error( 'payment_pending', 'A payment for this link is already waiting for approval.', array( 'status' => 409 ) );
+            }
         }
 
         $body = array(
@@ -73,8 +134,9 @@ class Yellow_Links_Stripe_Billing {
             'capture_method' => 'manual',
             'receipt_email'  => $buyer_email,
             'metadata'       => array(
-                'link_id' => $link_id,
-                'post_id' => $post_id
+                'link_id' => 'link-' . $post_id,
+                'post_id' => $post_id,
+                'user_id' => $user_id,
             )
         );
 
@@ -86,6 +148,7 @@ class Yellow_Links_Stripe_Billing {
 
         update_post_meta( $post_id, 'yl_stripe_pi', $intent['id'] );
         update_post_meta( $post_id, 'yl_buyer_email', $buyer_email );
+        update_post_meta( $post_id, 'yl_buyer_user', $user_id );
         
         return rest_ensure_response( array(
             'success' => true,
@@ -108,6 +171,11 @@ class Yellow_Links_Stripe_Billing {
 
         if ( is_wp_error( $capture ) ) {
             return $capture;
+        }
+
+        // The slot goes active only once Stripe says the money was taken.
+        if ( 'succeeded' !== ( $capture['status'] ?? '' ) ) {
+            return new WP_Error( 'capture_incomplete', 'Stripe did not confirm the payment, so the slot was not activated.', array( 'status' => 402 ) );
         }
 
         wp_update_post( array(

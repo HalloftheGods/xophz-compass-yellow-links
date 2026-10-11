@@ -62,6 +62,24 @@ All endpoints are registered under the `yellow-links/v1` REST namespace:
 | `Yellow_Links_CPT` | `includes/class-yellow-links-cpt.php` | CPT (`yellow_link`), taxonomy (`yellow_link_category`), and post meta registration |
 | `Yellow_Links_API` | `includes/class-yellow-links-api.php` | REST API endpoint handlers and Gemini AI client integration |
 | `Yellow_Links_Connectors` | `includes/class-yellow-links-connectors.php` | Single resolver for every credential (Gemini, Stripe, Plausible) over the WordPress Connectors API |
+| `Yellow_Links_Write_Handlers` | `includes/trait-yellow-links-write-handlers.php` | Handlers for submit, vote, click and comment, used by `Yellow_Links_API` |
+| `Yellow_Links_Rate_Limit` | `includes/class-yellow-links-rate-limit.php` | Per-user and per-IP (`REMOTE_ADDR`) fixed-window counters kept in transients |
+
+### Who can call what (`yellow-links/v1`)
+
+| Access | Routes |
+| :-- | :-- |
+| Public read | `GET /network`, `GET /links`, `GET /export/geojson`, `GET /me` |
+| Public write, counted per address | `POST /links/{id}/click`: one count per address per link per hour, and 300 counted clicks per address per hour |
+| Logged-in only | `POST /links` (10 per user and 30 per address per hour), `POST /links/{id}/vote` and `POST /comments/{id}/vote` (one vote per user per target, 120 per hour), `POST /links/{id}/comment` (10 per hour), `POST /monetization/buy-slot` (5 per user and 10 per address per hour), `POST /gemini/analyze`, `POST /gemini/suggest-ad` (20 Gemini calls per user per hour) |
+| Admin (`manage_options`) | `POST /monetization/approve-slot`, `POST /monetization/reject-slot`, `PUT /links/{id}/status`, `DELETE /links/{id}` |
+
+Notes:
+
+* A submitted link keeps only an `http` or `https` address. The trust tier (the Government, Non-Profit and Business badges) is set by an admin only: a link from anyone else is a `community` link whatever the request says. The comment author is the logged-in user's display name.
+* Votes, clicks and comments only apply to published `yellow_link` posts.
+* `buy-slot` opens a Stripe PaymentIntent with manual capture for the caller's own link (an admin may buy for any link). It never marks a slot paid: a slot goes active in `approve-slot`, and only when Stripe confirms the capture. The price is the caller's `price_cents` between 500 and 500000, unless the site fixes it with the `yellow_links_slot_price_cents` filter or the `xophz_compass_yellow_links_slot_price_cents` option (cents). A payment already waiting for approval is not replaced.
+* Counters key on `REMOTE_ADDR`. Behind a proxy, make the web server set `REMOTE_ADDR` from the proxy (or map the visitor address with the `yellow_links_client_ip` filter), or every visitor shares one counter.
 
 ### Post Meta Fields (`yellow_link`)
 
