@@ -8,21 +8,23 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-connectors.php';
+require_once plugin_dir_path( __FILE__ ) . 'class-yellow-links-ai-gate.php';
 require_once plugin_dir_path( __FILE__ ) . 'class-stripe-billing.php';
 
 class Yellow_Links_API {
 
     public function register_routes() {
+        // Both routes spend the owner's Gemini key: logged-in users only, plus a per-user hourly limit.
         register_rest_route( 'yellow-links/v1', '/gemini/analyze', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'analyze_link' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'Yellow_Links_AI_Gate', 'can_use_ai' ),
         ) );
 
         register_rest_route( 'yellow-links/v1', '/gemini/suggest-ad', array(
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array( $this, 'suggest_ad' ),
-            'permission_callback' => '__return_true',
+            'permission_callback' => array( 'Yellow_Links_AI_Gate', 'can_use_ai' ),
         ) );
 
         register_rest_route( 'yellow-links/v1', '/network', array(
@@ -165,6 +167,11 @@ class Yellow_Links_API {
         $api_key = $this->get_gemini_key();
         if ( empty( $api_key ) ) {
             return new WP_Error( 'no_api_key', 'The Gemini API key is not configured in Settings > Connectors (Google).', array( 'status' => 500 ) );
+        }
+
+        $allowance = Yellow_Links_AI_Gate::consume_allowance();
+        if ( is_wp_error( $allowance ) ) {
+            return $allowance;
         }
 
         $model = $this->get_gemini_model();
