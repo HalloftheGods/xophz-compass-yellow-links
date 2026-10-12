@@ -3,7 +3,7 @@
  * Plugin Name:       Xophz Yellow Links
  * Plugin URI:        https://yellowlinks.worldwidewebwork.com
  * Description:       Standalone WordPress backend and router for the Yellow Links web app.
- * Version:           26.10.11-347
+ * Version:           26.10.12
  * Author:            Hall of the Gods, Inc.
  * Category:          Command Deck
  * Group:             Ecosystem
@@ -14,7 +14,7 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-define( 'XOPHZ_COMPASS_YELLOW_LINKS_VERSION', '26.10.11-347' );
+define( 'XOPHZ_COMPASS_YELLOW_LINKS_VERSION', '26.10.12' );
 define( 'XOPHZ_COMPASS_YELLOW_LINKS_PATH', plugin_dir_path( __FILE__ ) );
 define( 'XOPHZ_COMPASS_YELLOW_LINKS_URL', plugin_dir_url( __FILE__ ) );
 
