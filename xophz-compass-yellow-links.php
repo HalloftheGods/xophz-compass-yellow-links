@@ -4,7 +4,8 @@
  * Plugin URI:        https://yellowlinks.worldwidewebwork.com
  * Description:       Standalone WordPress backend and router for the Yellow Links web app.
  * Version:           26.10.12
- * Author:            Hall of the Gods, Inc.
+ * Author:            My Compass Consulting
+ * Author URI:        https://mycompassconsulting.com/
  * Category:          Command Deck
  * Group:             Ecosystem
  * Text Domain:       xophz-compass-yellow-links
